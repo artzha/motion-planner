@@ -86,12 +86,15 @@ struct QueueCompare {
 //   float    Heuristic(const State&, const State& goal)
 //   bool     AtGoal(const State&, const State& goal)
 //   void     GetSuccessors(const State&, vector<State>*, vector<float>* costs)
+// heuristic_weight w >= 1 gives weighted A* (f = g + w*h): larger w is greedier
+// and faster but sacrifices optimality. w = 1 (default) is standard A*.
 template <class Domain, class Visualizer>
 bool AStar(const typename Domain::State& start,
            const typename Domain::State& goal,
            const Domain& domain,
            Visualizer* const viz,
-           std::vector<typename Domain::State>* path) {
+           std::vector<typename Domain::State>* path,
+           float heuristic_weight = 1.0f) {
   using State = typename Domain::State;
   static CumulativeFunctionTimer function_timer_(__FUNCTION__);
   CumulativeFunctionTimer::Invocation invoke(&function_timer_);
@@ -99,7 +102,7 @@ bool AStar(const typename Domain::State& start,
   // search fans out over free space until it hits this cap, so the ceiling is
   // roughly kMaxEdgeExpansions * per-expansion cost. Sized to keep the worst
   // case under ~0.2 s while still solving every goal in the demo scene.
-  static const uint64_t kMaxEdgeExpansions = 8500;
+  static const uint64_t kMaxEdgeExpansions = 10000;
   static const bool kDebug = false;
 
   std::unordered_map<uint64_t, uint64_t> parent_map_;
@@ -117,7 +120,9 @@ bool AStar(const typename Domain::State& start,
   const uint64_t k_start = domain.StateToKey(start);
   g_values_[k_start] = 0;
   state_map_[k_start] = start;
-  queue.push({AStarPriority(0, domain.Heuristic(start, goal)), k_start});
+  queue.push(
+      {AStarPriority(0, heuristic_weight * domain.Heuristic(start, goal)),
+       k_start});
 
   const double t_start = GetMonotonicTime();
 
@@ -162,7 +167,7 @@ bool AStar(const typename Domain::State& start,
         g_values_[k_next] = g;
         state_map_[k_next] = s_next;
         const float h = domain.Heuristic(s_next, goal);
-        queue.push({AStarPriority(g, h), k_next});
+        queue.push({AStarPriority(g, heuristic_weight * h), k_next});
         viz->DrawEdge(s_current, s_next);
       }
     }

@@ -41,6 +41,38 @@ python scripts/plot_plan.py
 
 ![Example hybrid A* plan](plan.png)
 
+## Tuning path diversity
+
+`plan()` is deterministic and optimal by default (`noise=0`, `weight=1`). Two
+optional, composable knobs make paths diverge in corridors/chokepoints instead
+of collapsing onto the single optimal line, and trade greedy vs thorough search:
+
+```python
+hybrid_astar.plan(cloud, goal, seed=i, noise=0.2, weight=1.3)
+```
+
+- `noise` (eta, meters): magnitude of a smooth, seeded cost-map potential added
+  to edge costs. Larger = more deviation. `0` disables it.
+- `weight` (>= 1): weighted-A* heuristic factor `f = g + weight * h`. Higher =
+  greedier and faster, settling on the first "good enough" route instead of the
+  strict optimum.
+- `seed`: fixes the noise field; same `(seed, noise, weight)` reproduces the
+  exact path. Different seeds give different routes to the same goal.
+
+To increase randomness further:
+
+- Shorten the noise correlation length (lane width) via `kNoiseCorrLength` in
+  [src/navigation/domain.h](src/navigation/domain.h) (e.g. 2.0 -> 1.0-1.5 m):
+  more, finer lanes. Below ~0.5 m it degrades to jitter that discretizes away.
+- Raise `noise` and/or widen the `weight` range (e.g. `U(1.3, 2.0)`).
+- Vary `seed` more aggressively across runs.
+
+Tradeoff: noise makes the search less directed, so high `noise` at `weight=1`
+can exceed the expansion cap (`kMaxEdgeExpansions` in
+[src/navigation/astar.h](src/navigation/astar.h)) and fail to find a path. Keep
+`weight >= ~1.2` with moderate `noise` (the demo uses `noise=0.2`,
+`weight~U(1.2,1.5)`), or raise the cap if you want large `noise` at `weight=1`.
+
 ## Additional details
 
 - Run both demos from the repo root so `config/navigation.lua` resolves.

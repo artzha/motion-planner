@@ -51,6 +51,8 @@ struct DifferentialDomain {
   static constexpr float kGoalTolerance = 0.2f;
   // Turn penalty (m per rad) so rotations are never zero-cost.
   static constexpr float kTurnPenalty = 0.1f;
+  // Correlation length (m) of the cost-map noise field: larger = wider lanes.
+  static constexpr float kNoiseCorrLength = 1.0f;
 
   struct State {
     Eigen::Vector2f loc = Eigen::Vector2f::Zero();  // x, y (m)
@@ -71,11 +73,16 @@ struct DifferentialDomain {
     void DrawEdge(const State&, const State&) {}
   };
 
+  // seed / noise_eta parameterize the optional cost-map noise. noise_eta is the
+  // magnitude (in meters) of a smooth potential added to edge costs; 0 (default)
+  // disables it and reproduces the deterministic planner.
   DifferentialDomain(const navigation::NavigationParams& params,
                      const Eigen::Vector2f& origin,
                      float world_size,
                      const Eigen::Vector2f& goal,
-                     const std::vector<Eigen::Vector2f>& point_cloud)
+                     const std::vector<Eigen::Vector2f>& point_cloud,
+                     uint64_t seed = 0,
+                     float noise_eta = 0.0f)
       : params_(params),
         origin_(origin),
         world_size_(world_size),
@@ -84,7 +91,9 @@ struct DifferentialDomain {
         kMapHeight(kMapWidth),
         dtheta_(2.0f * static_cast<float>(M_PI) / kNumAngles),
         robot_radius_(params.robot_width / 2.0f + params.obstacle_margin),
-        point_cloud_(point_cloud) {
+        point_cloud_(point_cloud),
+        seed_(seed),
+        noise_eta_(noise_eta) {
     // Precompute the (v, omega) control grid over the global velocity bounds.
     const float vmax = params_.linear_limits.max_speed;
     const float wmax = params_.angular_limits.max_speed;
@@ -170,7 +179,10 @@ struct DifferentialDomain {
       if (!InBounds(end.loc)) continue;
 
       succ->push_back(end);
-      costs->push_back(std::fabs(v_c) * T + kTurnPenalty * std::fabs(w_c) * T);
+      // Base arc-length + turn cost, plus a smooth non-negative cost-map
+      // potential (eta * N in [0, eta]) so edges stay strictly positive.
+      const float base = std::fabs(v_c) * T + kTurnPenalty * std::fabs(w_c) * T;
+      costs->push_back(base + noise_eta_ * SmoothNoise(end.loc));
     }
   }
 
@@ -227,6 +239,38 @@ struct DifferentialDomain {
     return ab;
   }
 
+  // ---- Smooth cost-map noise (deterministic value noise) ----
+
+  static float Fade(float t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+
+  // Hash of integer lattice node (ix, iy) and the seed to a value in [0, 1).
+  float LatticeValue(int ix, int iy) const {
+    uint64_t h = (static_cast<uint64_t>(static_cast<uint32_t>(ix)) << 32) ^
+                 static_cast<uint32_t>(iy) ^ (seed_ + 0x9e3779b97f4a7c15ULL);
+    h = (h ^ (h >> 30)) * 0xbf58476d1ce4e5b9ULL;  // splitmix64
+    h = (h ^ (h >> 27)) * 0x94d049bb133111ebULL;
+    h ^= (h >> 31);
+    return (h >> 11) * (1.0f / 9007199254740992.0f);
+  }
+
+  // Low-frequency value noise in [0, 1): random values on a lattice with spacing
+  // kNoiseCorrLength, smootherstep-interpolated. Unlike per-cell white noise this
+  // is spatially correlated, so it shifts which lane looks cheaper instead of
+  // just adding jitter that discretizes away.
+  float SmoothNoise(const Eigen::Vector2f& p) const {
+    const float s = p.x() / kNoiseCorrLength;
+    const float t = p.y() / kNoiseCorrLength;
+    const int x0 = static_cast<int>(std::floor(s));
+    const int y0 = static_cast<int>(std::floor(t));
+    const float fx = Fade(s - x0);
+    const float fy = Fade(t - y0);
+    const float a = LatticeValue(x0, y0) +
+                    fx * (LatticeValue(x0 + 1, y0) - LatticeValue(x0, y0));
+    const float b = LatticeValue(x0, y0 + 1) +
+                    fx * (LatticeValue(x0 + 1, y0 + 1) - LatticeValue(x0, y0 + 1));
+    return a + fy * (b - a);
+  }
+
   navigation::NavigationParams params_;
   Eigen::Vector2f origin_;
   float world_size_;
@@ -236,6 +280,8 @@ struct DifferentialDomain {
   float dtheta_;
   float robot_radius_;
   std::vector<Eigen::Vector2f> point_cloud_;
+  uint64_t seed_;
+  float noise_eta_;
   std::vector<std::pair<float, float>> controls_;
   std::shared_ptr<motion_primitives::Wavefront> wavefront_;
 };

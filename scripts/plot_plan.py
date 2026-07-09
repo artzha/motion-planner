@@ -29,7 +29,7 @@ def rect(x0, x1, y0, y1, step=0.1):
     return np.column_stack([gx.ravel(), gy.ravel()])
 
 
-def main(num_goals=16, radius=6.4):
+def main(num_goals=16, radius=6.4, noise=0.5):
     # Rectangular obstacles in base_link coordinates (x fwd, y left).
     cloud = np.vstack([
         rect(1.4, 1.6, -0.8, 0.8),    # wall straight ahead
@@ -54,7 +54,11 @@ def main(num_goals=16, radius=6.4):
     reached = 0
     for i, (gx, gy) in enumerate(goals):
         color = cmap(i / num_goals)
-        path = hybrid_astar.plan(cloud, (float(gx), float(gy)), config_path=config)
+        # Per-goal seed + randomized weighted-A* factor so paths diversify
+        # instead of collapsing onto the same corridor. w >= 1.2 keeps the
+        # noise-inflated search within the expansion cap. Seeded for reproducibility.
+        weight = np.random.default_rng(i).uniform(1.3, 2.0)
+        path = hybrid_astar.plan(cloud, (float(gx), float(gy)), config_path=config, seed=i, noise=noise, weight=float(weight))
         ax.plot(gy, gx, "*", color=color, ms=12, zorder=4)
         if path.shape[0] == 0:
             ax.plot(gy, gx, "x", color="red", ms=10, mew=2, zorder=5)
@@ -72,7 +76,7 @@ def main(num_goals=16, radius=6.4):
     ax.set_xlabel("y (left, m)")
     ax.set_ylabel("x (forward, m)")
     ax.set_title(
-        f"Hybrid A* paths to {num_goals} goals, +/-90 deg on a {radius} m arc")
+        f"Hybrid A* paths to {num_goals} goals (noise eta={noise} m, w~U[1.2,1.5])")
     ax.invert_xaxis()
     ax.axis("equal")
     ax.grid(True, alpha=0.3)
