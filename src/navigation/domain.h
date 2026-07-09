@@ -40,8 +40,9 @@ struct DifferentialDomain {
   // Discretization of the (v, omega) control grid.
   static constexpr int kNumV = 4;
   static constexpr int kNumW = 9;
-  // Duration a constant control is held per edge (seconds).
-  static constexpr float kPrimitiveDuration = 0.75f;
+  // Duration a constant control is held per edge (seconds). Larger values make
+  // each edge cover more ground, so fewer expansions reach the goal.
+  static constexpr float kPrimitiveDuration = 1.5f;
   // Integration/collision substep used during planning. Coarser than the
   // control-loop dt to speed up the search (fewer substeps per primitive);
   // must stay well below robot_radius / max_speed to avoid tunneling.

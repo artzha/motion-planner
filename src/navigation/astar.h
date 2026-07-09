@@ -95,7 +95,11 @@ bool AStar(const typename Domain::State& start,
   using State = typename Domain::State;
   static CumulativeFunctionTimer function_timer_(__FUNCTION__);
   CumulativeFunctionTimer::Invocation invoke(&function_timer_);
-  static const uint64_t kMaxEdgeExpansions = 200000;
+  // Safety cap on expansions. This bounds worst-case (no-solution) runtime: the
+  // search fans out over free space until it hits this cap, so the ceiling is
+  // roughly kMaxEdgeExpansions * per-expansion cost. Sized to keep the worst
+  // case under ~0.2 s while still solving every goal in the demo scene.
+  static const uint64_t kMaxEdgeExpansions = 8500;
   static const bool kDebug = false;
 
   std::unordered_map<uint64_t, uint64_t> parent_map_;

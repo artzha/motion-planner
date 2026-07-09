@@ -29,7 +29,7 @@ def rect(x0, x1, y0, y1, step=0.1):
     return np.column_stack([gx.ravel(), gy.ravel()])
 
 
-def main(num_goals=8, radius=6.4):
+def main(num_goals=16, radius=6.4):
     # Rectangular obstacles in base_link coordinates (x fwd, y left).
     cloud = np.vstack([
         rect(1.4, 1.6, -0.8, 0.8),    # wall straight ahead
