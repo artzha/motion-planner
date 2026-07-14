@@ -22,6 +22,7 @@ NavigationParams LoadConfig(const std::string& lua_path) {
   REAL_PARAM(clearance_weight);
   REAL_PARAM(velocity_weight);
   REAL_PARAM(distance_weight);
+  REAL_PARAM(heading_weight);
   REAL_PARAM(goal_tolerance);
   REAL_PARAM(robot_length);
   REAL_PARAM(robot_width);
@@ -47,6 +48,7 @@ NavigationParams LoadConfig(const std::string& lua_path) {
   params.clearance_weight = CONFIG_clearance_weight;
   params.velocity_weight = CONFIG_velocity_weight;
   params.distance_weight = CONFIG_distance_weight;
+  params.heading_weight = CONFIG_heading_weight;
   params.goal_tolerance = CONFIG_goal_tolerance;
   params.robot_length = CONFIG_robot_length;
   params.robot_width = CONFIG_robot_width;

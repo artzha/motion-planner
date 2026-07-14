@@ -53,6 +53,7 @@ struct NavigationParams {
   float clearance_weight;
   float velocity_weight;
   float distance_weight;
+  float heading_weight;  // alignment of the arc heading with the local-target bearing
 
   double goal_tolerance;
 

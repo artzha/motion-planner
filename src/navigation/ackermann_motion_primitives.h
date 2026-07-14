@@ -7,9 +7,9 @@
 
 #include "constant_curvature_arc.h"
 #include "eigen3/Eigen/Dense"
+#include "motion_primitives.h"
 #include "shared/math/math_util.h"
 #include "navigation_params.h"
-#include "wavefront.h"
 
 using std::fabs;
 using std::max;
@@ -20,62 +20,45 @@ using math_util::Pow;
 
 namespace motion_primitives {
 
-class AckermannSampler {
+// Samples constant-curvature ackermann arcs. Inherits the generic sampler
+// interface (Update / GetSamples / SetNavParams and the shared state members
+// vel, ang_vel, local_target, point_cloud, nav_params).
+class AckermannSampler : public PathRolloutSamplerBase {
  public:
-  AckermannSampler() : linear_vel_(0), angular_vel_(0), local_target_(0, 0) {}
-  AckermannSampler(const navigation::NavigationParams& nav_params)
-      : nav_params_(nav_params),
-        linear_vel_(0),
-        angular_vel_(0),
-        local_target_(0, 0) {}
-  virtual ~AckermannSampler() = default;
+  AckermannSampler() = default;
+  explicit AckermannSampler(const navigation::NavigationParams& params) {
+    nav_params = params;
+  }
 
-  void update(const Eigen::Vector2f& new_vel,
-              const float new_ang_vel,
-              const Eigen::Vector2f& new_local_target,
-              const std::vector<Eigen::Vector2f>& new_point_cloud);
+  std::vector<std::shared_ptr<PathRolloutBase>> GetSamples(int n) override;
 
   void setPathLength(std::shared_ptr<ConstantCurvatureArc> path_ptr);
   virtual void checkObstacles(std::shared_ptr<ConstantCurvatureArc> path_ptr);
-
-  virtual std::vector<std::shared_ptr<ConstantCurvatureArc>> getSamples(int n);
-
- protected:
-  navigation::NavigationParams nav_params_;
-
-  float linear_vel_;
-  float angular_vel_;
-  Eigen::Vector2f local_target_;
-  std::vector<Eigen::Vector2f> point_cloud_; // base_link frame
 };
 
 struct PathMetrics {
-  float geodesic;   // Dubins distance from path endpoint pose to the goal
+  float goal_dist;  // L2 distance from the path endpoint to the local subgoal
+  float heading;    // residual angle (rad) between the endpoint heading and the
+                    // bearing from the endpoint to the local subgoal (0 = aligned)
   float clearance;  // distance to nearest obstacle along the path
   float velocity;   // commanded forward velocity for the path
 };
 
-class AckermannEvaluator {
+// DWA-style evaluator over ackermann arcs. Inherits the generic evaluator
+// interface (Update / FindBest and the shared state members).
+class AckermannEvaluator : public PathEvaluatorBase {
  public:
-  AckermannEvaluator(const navigation::NavigationParams& nav_params)
-      : nav_params_(nav_params), linear_vel_(0), local_target_(0, 0) {}
-  ~AckermannEvaluator() = default;
+  explicit AckermannEvaluator(const navigation::NavigationParams& nav_params)
+      : nav_params_(nav_params) {}
+  ~AckermannEvaluator() override = default;
 
-  void update(const Eigen::Vector2f& new_local_target,
-              const float new_linear_vel,
-              const std::vector<Eigen::Vector2f>& new_point_cloud);
+  std::shared_ptr<PathRolloutBase> FindBest(
+      const std::vector<std::shared_ptr<PathRolloutBase>>& paths) override;
 
-  std::shared_ptr<ConstantCurvatureArc> findBestPath(
-      std::vector<std::shared_ptr<ConstantCurvatureArc>>& samples);
-
-  PathMetrics computeMetrics(std::shared_ptr<ConstantCurvatureArc> path_ptr);
+  PathMetrics computeMetrics(const std::shared_ptr<PathRolloutBase>& path_ptr);
 
  private:
   navigation::NavigationParams nav_params_;
-
-  float linear_vel_;
-  Eigen::Vector2f local_target_;
-  std::shared_ptr<Wavefront> wavefront_;
 };
 }  // namespace motion_primitives
 

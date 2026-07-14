@@ -10,8 +10,7 @@
 
 #include "eigen3/Eigen/Dense"
 
-#include "astar.h"
-#include "domain.h"
+#include "hybrid_planner.h"
 #include "navigation_config.h"
 #include "navigation_params.h"
 
@@ -46,32 +45,16 @@ py::array_t<float> plan(
   }
 
   const navigation::NavigationParams params = navigation::LoadConfig(config_path);
-  const Eigen::Vector2f origin(-world_size / 2.0f, -world_size / 2.0f);
 
-  const navigation::DifferentialDomain::State start(0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
-  const navigation::DifferentialDomain::State goal_state(goal.first, goal.second,
-                                                         0.0f, 0.0f, 0.0f);
-  navigation::DifferentialDomain domain(params, origin, world_size,
-                                        goal_state.loc, cloud, seed, noise);
+  const navigation::HybridPlanResult res = navigation::PlanHybridAStar(
+      cloud, Eigen::Vector2f(goal.first, goal.second), params, world_size, seed,
+      noise, weight);
 
-  navigation::DifferentialDomain::NullVisualizer viz;
-  std::vector<navigation::DifferentialDomain::State> path;
-  const bool found =
-      navigation::AStar(start, goal_state, domain, &viz, &path, weight);
-
-  // Densify each edge by replaying its constant control through the same
-  // integrator the planner used, yielding continuous (x, y, theta, v, omega).
+  // Flatten the densified (x, y, theta, v, omega) trajectory into rows.
   std::vector<std::array<float, 5>> rows;
-  if (found && !path.empty()) {
-    const auto& p0 = path.front();
-    rows.push_back({p0.loc.x(), p0.loc.y(), p0.theta, p0.v, p0.omega});
-    for (size_t i = 1; i < path.size(); ++i) {
-      const std::vector<navigation::DifferentialDomain::State> roll =
-          domain.Rollout(path[i - 1], path[i].v, path[i].omega, nullptr);
-      for (const auto& s : roll) {
-        rows.push_back({s.loc.x(), s.loc.y(), s.theta, s.v, s.omega});
-      }
-    }
+  rows.reserve(res.path.size());
+  for (const auto& s : res.path) {
+    rows.push_back({s.loc.x(), s.loc.y(), s.theta, s.v, s.omega});
   }
 
   py::array_t<float> out({static_cast<py::ssize_t>(rows.size()),

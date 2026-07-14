@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>motion_planner</name>
+  <version>0.1.0</version>
+  <description>ROS-free kinodynamic motion planner (hybrid A* + local arc sampler/evaluator) packaged for ROS 2 colcon, exporting a C++ library and a Python-importable pybind module.</description>
+  <maintainer email="arthurz@cs.utexas.edu">Arthur Zhang</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>python3-dev</buildtool_depend>
+  <buildtool_depend>pybind11-dev</buildtool_depend>
+
+  <depend>config_reader</depend>
+  <depend>amrl_shared_lib</depend>
+  <depend>eigen</depend>
+  <depend>liblua5.2-dev</depend>
+  <depend>libgoogle-glog-dev</depend>
+  <depend>libgflags-dev</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

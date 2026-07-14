@@ -10,15 +10,15 @@ CONFIG_FLOAT(max_fov, "DifferentialSampler.max_fov");
 
 namespace motion_primitives {
 
-std::vector<std::shared_ptr<ConstantCurvatureArc>> DifferentialSampler::getSamples(
+std::vector<std::shared_ptr<PathRolloutBase>> DifferentialSampler::GetSamples(
     int n) {
-  auto samples = AckermannSampler::getSamples(n);
+  auto samples = AckermannSampler::GetSamples(n);
 
-  const float bearing = atan2(local_target_.y(), local_target_.x());
+  const float bearing = atan2(local_target.y(), local_target.x());
   // Curvature a single arc would need to face the target (pure-pursuit style).
   // Offer a turn in place when that exceeds the sampler's curvature limit, or
   // when the target sits in the rear half-plane where forward arcs can't reach.
-  const float dist = fmax(local_target_.norm(), 1e-3f);
+  const float dist = fmax(local_target.norm(), 1e-3f);
   const float required_curvature = 2.0f * fabs(sin(bearing)) / dist;
   const bool needs_turn = fabs(bearing) > static_cast<float>(M_PI_2) ||
                           required_curvature > CONFIG_max_curvature;
@@ -28,7 +28,7 @@ std::vector<std::shared_ptr<ConstantCurvatureArc>> DifferentialSampler::getSampl
     const float kInf = std::numeric_limits<float>::infinity();
     for (const float curvature : {kInf, -kInf}) {
       auto sample = std::make_shared<ConstantCurvatureArc>(
-          curvature, turn_angle, nav_params_.max_clearance);
+          curvature, turn_angle, nav_params.max_clearance);
       checkObstacles(sample);
       samples.push_back(sample);
     }
@@ -44,16 +44,16 @@ void DifferentialSampler::checkObstacles(
     return;
   }
 
-  const float l = nav_params_.robot_length + 2 * nav_params_.obstacle_margin;
-  const float w = nav_params_.robot_width + 2 * nav_params_.obstacle_margin;
-  const float l_f = l - (l - nav_params_.robot_wheelbase) / 2;  // base to front
-  const float l_r = l - l_f;                                    // base to rear
+  const float l = nav_params.robot_length + 2 * nav_params.obstacle_margin;
+  const float w = nav_params.robot_width + 2 * nav_params.obstacle_margin;
+  const float l_f = l - (l - nav_params.robot_wheelbase) / 2;  // base to front
+  const float l_r = l - l_f;                                   // base to rear
 
   // Circumscribed radius of the footprint; while turning in place the footprint
   // sweeps the disk of this radius about base_link.
   const float r_max = sqrt(Sq(max(l_f, l_r)) + Sq(w / 2.0f));
 
-  for (const auto& point : point_cloud_) {
+  for (const auto& point : point_cloud) {
     const float r_p = point.norm();
     if (r_p >= r_max) {
       // Point stays outside the swept disk; it never collides during rotation.
@@ -68,7 +68,7 @@ void DifferentialSampler::checkObstacles(
   }
 
   // Dead-band: collapse a sliver of clearance to a hard collision.
-  if (path_ptr->clearance() < CONFIG_clearance_clip * nav_params_.max_clearance) {
+  if (path_ptr->clearance() < CONFIG_clearance_clip * nav_params.max_clearance) {
     path_ptr->set_clearance(0);
   }
 }

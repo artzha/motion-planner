@@ -17,7 +17,7 @@ class DifferentialSampler : public AckermannSampler {
  public:
   using AckermannSampler::AckermannSampler;
 
-  std::vector<std::shared_ptr<ConstantCurvatureArc>> getSamples(int n) override;
+  std::vector<std::shared_ptr<PathRolloutBase>> GetSamples(int n) override;
   void checkObstacles(std::shared_ptr<ConstantCurvatureArc> path_ptr) override;
 };
 
