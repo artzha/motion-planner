@@ -16,20 +16,33 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # ---------------------------------------------------------------------------
-# Dependencies. config_reader (header-only) and amrl_shared_lib are ament
-# packages in this workspace; Eigen3/Lua/glog/gflags come from the system.
+# Dependencies. Eigen3/Lua/glog/gflags come from the system. ROS 2 (ament) is
+# optional: when it is available (colcon), config_reader and amrl_shared_lib are
+# resolved as installed ament packages. Otherwise (plain cmake / uv venv) they
+# are built from the vendored submodules under src/, so ROS is not required.
 # ---------------------------------------------------------------------------
-find_package(ament_cmake REQUIRED)
-find_package(config_reader REQUIRED)
-find_package(amrl_shared_lib REQUIRED)
+find_package(ament_cmake QUIET)
+set(_use_ament ${ament_cmake_FOUND})
+
+# Position-independent so the static-ish lib (and the vendored amrl_shared_lib
+# built below) can be linked into the Python extension module (a shared object).
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 find_package(Eigen3 REQUIRED)
 find_package(Lua 5.2 REQUIRED)
 find_library(GLOG_LIBRARY NAMES glog REQUIRED)
 find_library(GFLAGS_LIBRARY NAMES gflags REQUIRED)
 
-# Position-independent so the static-ish lib can be linked into the Python
-# extension module (a shared object).
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+if(_use_ament)
+  find_package(config_reader REQUIRED)
+  find_package(amrl_shared_lib REQUIRED)
+  set(_planner_dep_libs config_reader::config_reader amrl_shared_lib::amrl_shared_lib)
+else()
+  # amrl_shared_lib is a plain-CMake static lib; config_reader is header-only
+  # (its own CMakeLists needs ament, so wire its headers via include dirs below).
+  add_subdirectory(src/shared)
+  set(_planner_dep_libs amrl_shared_lib)
+endif()
 
 # ---------------------------------------------------------------------------
 # Core planning library (reusable primitives / sampler / evaluator / config).
@@ -53,9 +66,18 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC
   ${LUA_INCLUDE_DIR})
 
+if(NOT _use_ament)
+  # Sources include amrl headers both as "shared/..." and bare "math/.."/"util/.."
+  # and config_reader as "config_reader/config_reader.h"; in the non-ament build
+  # the vendored roots must be on the include path.
+  target_include_directories(${PROJECT_NAME} PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/shared>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/config_reader/include>)
+endif()
+
 target_link_libraries(${PROJECT_NAME} PUBLIC
-  config_reader::config_reader
-  amrl_shared_lib::amrl_shared_lib
+  ${_planner_dep_libs}
   Eigen3::Eigen
   ${LUA_LIBRARIES}
   ${GLOG_LIBRARY}
@@ -122,8 +144,10 @@ install(DIRECTORY src/navigation/
 install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME})
 
-ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_include_directories(include include/motion_planner)
-ament_export_dependencies(config_reader amrl_shared_lib Eigen3)
+if(_use_ament)
+  ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
+  ament_export_include_directories(include include/motion_planner)
+  ament_export_dependencies(config_reader amrl_shared_lib Eigen3)
 
-ament_package()
+  ament_package()
+endif()

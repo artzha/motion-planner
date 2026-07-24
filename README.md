@@ -17,12 +17,23 @@ pip install pybind11 numpy matplotlib
 make
 ```
 
-Make the `hybrid_astar` module importable from anywhere by copying it into your
-interpreter's `site-packages`:
+Make the `hybrid_astar` module importable from anywhere by copying it into the
+`site-packages` of the **same interpreter you built against** (the `.so` is
+ABI-tagged, e.g. `cpython-312`, so it must match). Activate that environment
+first — or replace `python` below with its absolute path (e.g.
+`.venv/bin/python`) — so the copy destination is that interpreter's own
+`site-packages`:
 
 ```bash
-cp build/hybrid_astar*.so \
-  "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+python - <<'PY'
+import glob, shutil, sysconfig
+dst = sysconfig.get_path("purelib")
+sos = glob.glob("build/hybrid_astar*.so")
+assert sos, "no build/hybrid_astar*.so found — build it first (make)"
+for so in sos:
+    print(f"copying {so} -> {dst}")
+    shutil.copy(so, dst)
+PY
 ```
 
 ## Demo
