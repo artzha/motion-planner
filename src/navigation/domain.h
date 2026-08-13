@@ -3,8 +3,10 @@
 #include <inttypes.h>
 
 // C++ headers.
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -22,6 +24,39 @@
 #define DIFFERENTIAL_DOMAIN_H
 
 namespace navigation {
+
+// How a search is pushed away from the paths other candidates already occupy.
+//
+// kNoise perturbs the cost map with a smooth seeded potential, so every search
+// is an independent draw. Independent draws cluster: nothing tells the second
+// candidate that the first already took a lane, so a fan of them bunches in the
+// middle even when the endpoints are well spread.
+//
+// kBallPenalty instead repels: balls placed along already-accepted paths add
+// cost, so each successive search must detour around its predecessors. That
+// makes separation a property of the set rather than a hoped-for side effect of
+// randomness. Both are kept so the two can be compared directly.
+enum class DiversityMode { kNone, kNoise, kBallPenalty };
+
+struct DiversityParams {
+  DiversityMode mode = DiversityMode::kNone;
+
+  // The smooth cost-map potential: seed fixes it (the same seed reproduces the
+  // path exactly) and noise_eta is its magnitude in meters. This is the whole
+  // mechanism under kNoise, and an optional addition under kBallPenalty, where
+  // it supplies variation between searches that the repulsion field cannot --
+  // the balls are a function of the accepted paths, so on their own they answer
+  // an unchanged scene identically every time.
+  uint64_t seed = 0;
+  float noise_eta = 0.0f;
+
+  // kBallPenalty: centers of the repulsion balls, in the same frame as the
+  // cloud and goal (base_link). ball_weight is the cost added (meters) for an
+  // edge run through a center, falling off linearly to 0 at ball_radius.
+  std::vector<Eigen::Vector2f> balls;
+  float ball_radius = 0.6f;
+  float ball_weight = 1.0f;
+};
 
 // Kinodynamic hybrid-A* domain for a differential-drive (unicycle) robot.
 //
@@ -73,16 +108,15 @@ struct DifferentialDomain {
     void DrawEdge(const State&, const State&) {}
   };
 
-  // seed / noise_eta parameterize the optional cost-map noise. noise_eta is the
-  // magnitude (in meters) of a smooth potential added to edge costs; 0 (default)
-  // disables it and reproduces the deterministic planner.
+  // `diversity` selects the optional term added to edge costs so that repeated
+  // searches over the same scene do not all return the same path. The default
+  // (kNone) reproduces the deterministic planner.
   DifferentialDomain(const navigation::NavigationParams& params,
                      const Eigen::Vector2f& origin,
                      float world_size,
                      const Eigen::Vector2f& goal,
                      const std::vector<Eigen::Vector2f>& point_cloud,
-                     uint64_t seed = 0,
-                     float noise_eta = 0.0f)
+                     const DiversityParams& diversity = {})
       : params_(params),
         origin_(origin),
         world_size_(world_size),
@@ -92,8 +126,7 @@ struct DifferentialDomain {
         dtheta_(2.0f * static_cast<float>(M_PI) / kNumAngles),
         robot_radius_(params.robot_width / 2.0f + params.obstacle_margin),
         point_cloud_(point_cloud),
-        seed_(seed),
-        noise_eta_(noise_eta) {
+        div_(diversity) {
     // Precompute the (v, omega) control grid over the global velocity bounds.
     const float vmax = params_.linear_limits.max_speed;
     const float wmax = params_.angular_limits.max_speed;
@@ -111,6 +144,27 @@ struct DifferentialDomain {
     grid.half_extent = world_size / 2.0f;
     wavefront_ = std::make_shared<motion_primitives::Wavefront>(
         grid, robot_radius_, goal, point_cloud);
+
+    // A second field that also carries the repulsion, used to order the search
+    // while the first keeps bounding true distance. Both are needed because they
+    // answer different questions: the queue wants the cost-to-go of the function
+    // actually being minimized, whereas the suboptimality bound compares against
+    // an optimal *length* and would over-prune if handed a cost-to-go inflated
+    // by repulsion the path may well be willing to pay.
+    //
+    // Only built when there is repulsion to carry -- with no balls the two
+    // fields are identical, and sharing the one is both cheaper and exactly the
+    // pre-repulsion behavior.
+    if (div_.mode == DiversityMode::kBallPenalty && !div_.balls.empty() &&
+        div_.ball_weight > 0.0f) {
+      wavefront_penalized_ = std::make_shared<motion_primitives::Wavefront>(
+          grid, robot_radius_, goal, point_cloud,
+          [this](const Eigen::Vector2f& p) {
+            return div_.ball_weight * BallPenalty(p);
+          });
+    } else {
+      wavefront_penalized_ = wavefront_;
+    }
   }
 
   // ---- Pose-only key (x, y, theta) ----
@@ -137,7 +191,14 @@ struct DifferentialDomain {
 
   // ---- Heuristic and goal test ----
 
+  // Cost-to-go under the function the search minimizes, repulsion included.
   float Heuristic(const State& s, const State& /*goal*/) const {
+    return wavefront_penalized_->distance(s.loc);
+  }
+
+  // Cost-to-go counting distance only. Paired with the base edge costs, this is
+  // what a bound on length has to be tested against.
+  float HeuristicBase(const State& s, const State& /*goal*/) const {
     return wavefront_->distance(s.loc);
   }
 
@@ -147,11 +208,17 @@ struct DifferentialDomain {
 
   // ---- Successor generation (dynamic window + forward simulation) ----
 
+  // `costs` are what the search minimizes; `base_costs` are the same edges with
+  // the diversity term removed. Bounded-suboptimality pruning needs the latter:
+  // a path that detours to avoid another candidate should be judged on its own
+  // length, not on the repulsion it was charged for going there.
   void GetSuccessors(const State& s,
                      std::vector<State>* succ,
-                     std::vector<float>* costs) const {
+                     std::vector<float>* costs,
+                     std::vector<float>* base_costs) const {
     succ->clear();
     costs->clear();
+    base_costs->clear();
     const float T = kPrimitiveDuration;
     const float vmax = params_.linear_limits.max_speed;
     const float wmax = params_.angular_limits.max_speed;
@@ -179,10 +246,37 @@ struct DifferentialDomain {
       if (!InBounds(end.loc)) continue;
 
       succ->push_back(end);
-      // Base arc-length + turn cost, plus a smooth non-negative cost-map
-      // potential (eta * N in [0, eta]) so edges stay strictly positive.
-      const float base = std::fabs(v_c) * T + kTurnPenalty * std::fabs(w_c) * T;
-      costs->push_back(base + noise_eta_ * SmoothNoise(end.loc));
+      // Arc-length + turn cost, plus the non-negative diversity term (so edges
+      // stay strictly positive, and so the heuristic stays admissible against
+      // the base cost).
+      const float arc_length = std::fabs(v_c) * T;
+      const float base = arc_length + kTurnPenalty * std::fabs(w_c) * T;
+      float extra = 0.0f;
+      switch (div_.mode) {
+        case DiversityMode::kNone:
+          break;
+        case DiversityMode::kNoise:
+          extra = div_.noise_eta * SmoothNoise(end.loc);
+          break;
+        case DiversityMode::kBallPenalty:
+          // The two terms compose, and do different jobs: the balls separate
+          // this search from the candidates already accepted, while the noise
+          // (inert at the default noise_eta of 0) shifts which lane looks
+          // cheaper, so two searches given the same balls do not detour the same
+          // way. See PlanDiversePaths for which rounds get the noise.
+          //
+          // The repulsion is charged over the arc travelled, which is what makes
+          // ball_weight the fraction by which it inflates distance -- a rate,
+          // independent of how far a primitive happens to reach. Charging it per
+          // edge instead made a slow edge as expensive as a fast one covering
+          // several times the ground, and left the term in units the wavefront
+          // could not be given.
+          extra = div_.ball_weight * MeanBallPenalty(roll) * arc_length +
+                  div_.noise_eta * SmoothNoise(end.loc);
+          break;
+      }
+      costs->push_back(base + extra);
+      base_costs->push_back(base);
     }
   }
 
@@ -225,6 +319,45 @@ struct DifferentialDomain {
     return false;
   }
 
+  // Overlap of p with the repulsion balls, in [0, 1]: 1 at a center, falling
+  // linearly to 0 at ball_radius.
+  //
+  // The worst ball wins rather than the balls summing, so the magnitude does not
+  // depend on how densely the accepted paths were sampled into centers -- a path
+  // sampled every 0.3 m with 0.8 m balls would otherwise stack into a ridge
+  // several times taller than one ball.
+  float BallPenalty(const Eigen::Vector2f& p) const {
+    if (div_.ball_radius <= 0.0f || div_.balls.empty()) return 0.0f;
+    // The max of a decreasing function of distance is that function of the
+    // *smallest* distance, so find the nearest center under the cheap squared
+    // metric and transform once, rather than per ball.
+    float nearest_sq = std::numeric_limits<float>::max();
+    for (const auto& c : div_.balls) {
+      nearest_sq = std::min(nearest_sq, (p - c).squaredNorm());
+    }
+    const float r2 = div_.ball_radius * div_.ball_radius;
+    if (nearest_sq >= r2) return 0.0f;
+    return 1.0f - std::sqrt(nearest_sq) / div_.ball_radius;
+  }
+
+  // Mean overlap along a swept edge, in [0, 1].
+  //
+  // Averaged over the substeps rather than read off the endpoint alone: one
+  // primitive covers up to max_speed * kPrimitiveDuration, which is wider than a
+  // typical ball, so an edge that drives straight through the middle of one can
+  // end up outside it and pay nothing. Sampling the sweep the same way the
+  // collision check does closes that gap.
+  //
+  // The mean (not the max) makes briefly clipping a ball's edge cost
+  // proportionally little instead of incurring the same charge as running along
+  // its center.
+  float MeanBallPenalty(const std::vector<State>& roll) const {
+    if (div_.balls.empty() || roll.empty()) return 0.0f;
+    float sum = 0.0f;
+    for (const auto& s : roll) sum += BallPenalty(s.loc);
+    return sum / static_cast<float>(roll.size());
+  }
+
   bool InBounds(const Eigen::Vector2f& p) const {
     return p.x() >= origin_.x() && p.x() <= origin_.x() + world_size_ &&
            p.y() >= origin_.y() && p.y() <= origin_.y() + world_size_;
@@ -246,7 +379,7 @@ struct DifferentialDomain {
   // Hash of integer lattice node (ix, iy) and the seed to a value in [0, 1).
   float LatticeValue(int ix, int iy) const {
     uint64_t h = (static_cast<uint64_t>(static_cast<uint32_t>(ix)) << 32) ^
-                 static_cast<uint32_t>(iy) ^ (seed_ + 0x9e3779b97f4a7c15ULL);
+                 static_cast<uint32_t>(iy) ^ (div_.seed + 0x9e3779b97f4a7c15ULL);
     h = (h ^ (h >> 30)) * 0xbf58476d1ce4e5b9ULL;  // splitmix64
     h = (h ^ (h >> 27)) * 0x94d049bb133111ebULL;
     h ^= (h >> 31);
@@ -280,10 +413,10 @@ struct DifferentialDomain {
   float dtheta_;
   float robot_radius_;
   std::vector<Eigen::Vector2f> point_cloud_;
-  uint64_t seed_;
-  float noise_eta_;
+  DiversityParams div_;
   std::vector<std::pair<float, float>> controls_;
   std::shared_ptr<motion_primitives::Wavefront> wavefront_;
+  std::shared_ptr<motion_primitives::Wavefront> wavefront_penalized_;
 };
 
 }  // namespace navigation

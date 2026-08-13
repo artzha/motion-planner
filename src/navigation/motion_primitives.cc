@@ -32,8 +32,7 @@ float run1DTOC(const navigation::MotionLimits &limits,
     phase = 'X';
     if (FLAGS_v > 2) {
       cout << "WARNING!! OVERSHOOT" << endl;
-      cout << "distance_left: " << distance_left << ", v0_stopping_distance"
-           << v0_stopping_distance << endl;
+      cout << "distance_left: " << distance_left << ", v0_stopping_distance" << v0_stopping_distance << endl;
     }
     return max<float>(0, v0 - dv_d);
   }
