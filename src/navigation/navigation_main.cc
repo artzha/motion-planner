@@ -114,8 +114,8 @@ void TestAvoidance(const navigation::NavigationParams& params) {
     point_cloud.emplace_back(1.5f, y);
   }
 
-  // A 12.8m x 12.8m world at 0.1m/cell resolution, centered on base_link.
-  const float kWorldSize = 12.8f;
+  // A 19.2m x 19.2m world at 0.1m/cell resolution, centered on base_link.
+  const float kWorldSize = 19.2f;
   const Eigen::Vector2f origin(-kWorldSize / 2.0f, -kWorldSize / 2.0f);
 
   // Start from rest facing +x; goal 3m ahead (heading/velocity there are free).

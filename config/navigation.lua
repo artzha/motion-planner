@@ -34,7 +34,14 @@ NavigationParameters = {
 
 GridParameters = {
     resolution = 0.1;
-    half_extent = 5.0;
+    half_extent = 9.6;
+}
+
+AStarParameters = {
+    -- Safety cap on hybrid A* expansions. 7000 was sized for the 12.8 m demo
+    -- window (~0.2 s worst case). 14000 is 2x that, matching the 19.2 m window
+    -- (2x linear size) so 9 m diverse detours still finish inside the cap.
+    max_edge_expansions = 14000;
 }
 
 DifferentialSampler = {

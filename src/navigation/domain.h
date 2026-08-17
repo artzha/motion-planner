@@ -202,6 +202,18 @@ struct DifferentialDomain {
     return wavefront_->distance(s.loc);
   }
 
+  // The value HeuristicBase reports when the wavefront never reached a cell.
+  //
+  // It is a sentinel, not a distance, and a caller pruning against a cost bound
+  // has to know the difference: the wavefront inflates obstacles on its own grid
+  // and is therefore strictly more conservative than the swept-footprint check
+  // the successor generator uses, so cells it gives up on are routinely ones a
+  // primitive drives through -- every tight gap has a band of them. Treating the
+  // sentinel as a length makes any finite bound prune those cells outright.
+  float UnreachableHeuristic() const {
+    return motion_primitives::Wavefront::kUnreachable;
+  }
+
   bool AtGoal(const State& s, const State& goal) const {
     return (s.loc - goal.loc).norm() <= kGoalTolerance;
   }

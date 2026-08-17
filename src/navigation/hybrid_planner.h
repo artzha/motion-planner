@@ -78,6 +78,22 @@ struct DiversePlanOptions {
   float ball_weight = 2.0f;
   float ball_spacing = 0.3f;
 
+  // Radii around the shared start and the shared goal in which no ball is laid.
+  // Both candidates leave the same pose and reach the same goal, so a ball there
+  // charges every later round the same toll whichever way it went, and at the
+  // goal end can wall the goal off so the remaining rounds fail outright.
+  //
+  // They are separate because they buy opposite things, and which one matters
+  // depends on the scene. Shrinking the start zone pushes the rounds apart
+  // sooner, so the set differs over the stretch the robot actually executes
+  // before the next replan; widening the goal zone lets those rounds merge again
+  // on the approach, which is what makes a second candidate reachable at all
+  // when the goal sits in a bottleneck with only one way in.
+  //
+  // Negative means "use ball_radius", which is the behavior these replaced.
+  float start_exclusion = -1.0f;
+  float goal_exclusion = -1.0f;
+
   // Length budget for the detours, as a fraction over the optimal path's cost: a
   // path is only accepted under (1 + suboptimality) * optimal. Negative disables
   // the bound.

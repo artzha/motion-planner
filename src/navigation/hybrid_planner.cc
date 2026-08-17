@@ -24,6 +24,10 @@ void AppendBalls(const std::vector<DifferentialDomain::State>& path,
                  const DiversePlanOptions& opts,
                  std::vector<Eigen::Vector2f>* balls) {
   const float spacing = std::max(opts.ball_spacing, 1e-3f);
+  // Each zone falls back to ball_radius, which is what both were fixed to
+  // before they were separable.
+  const float start_excl = (opts.start_exclusion >= 0.0f) ? opts.start_exclusion : opts.ball_radius;
+  const float goal_excl = (opts.goal_exclusion >= 0.0f) ? opts.goal_exclusion : opts.ball_radius;
   // Start ready to emit, so the first eligible point past the exclusion zone
   // gets a ball.
   float since_last = spacing;
@@ -34,8 +38,10 @@ void AppendBalls(const std::vector<DifferentialDomain::State>& path,
     // Note the accumulator is deliberately not reset when a point is skipped
     // for being in an exclusion zone, so emission resumes at the right spacing
     // as soon as the path clears it.
-    if (p.norm() < opts.ball_radius) continue;
-    if ((p - goal).norm() < opts.ball_radius) continue;
+    if (p.norm() < start_excl)
+      continue;
+    if ((p - goal).norm() < goal_excl)
+      continue;
     balls->push_back(p);
     since_last = 0.0f;
   }

@@ -14,11 +14,20 @@
 #include "glog/logging.h"
 
 // Project headers.
+#include "config_reader/macros.h"
 #include "shared/math/math_util.h"
 #include "shared/util/timer.h"
 
 #ifndef A_STAR_H
 #define A_STAR_H
+
+// Safety cap on A* expansions. Bounds worst-case (no-solution) runtime: the
+// search fans out over free space until it hits this, so the ceiling is
+// roughly max_edge_expansions * per-expansion cost. File-scope so the key is
+// registered before LoadConfig runs (a function-local CONFIG_ would still be
+// 0 on the first search). 0 in lua leaves the 7000 default from the 12.8 m
+// demo window.
+CONFIG_INT(max_edge_expansions, "AStarParameters.max_edge_expansions");
 
 namespace navigation {
 
@@ -85,6 +94,8 @@ struct QueueCompare {
 //   uint64_t StateToKey(const State&)
 //   float    Heuristic(const State&, const State& goal)
 //   float    HeuristicBase(const State&, const State& goal)
+//   float    UnreachableHeuristic()   // sentinel HeuristicBase reports for a
+//                                     // cell it never reached; never pruned on
 //   bool     AtGoal(const State&, const State& goal)
 //   void     GetSuccessors(const State&, vector<State>*, vector<float>* costs,
 //                          vector<float>* base_costs)
@@ -104,6 +115,7 @@ struct QueueCompare {
 //               nodes over budget only in repulsion -- that is, precisely the
 //               detours the bound is there to permit.
 //   out_cost    when non-null, receives the base cost of the returned path.
+// Expansion cap is AStarParameters.max_edge_expansions in the lua config.
 template <class Domain, class Visualizer>
 bool AStar(const typename Domain::State& start,
            const typename Domain::State& goal,
@@ -116,11 +128,8 @@ bool AStar(const typename Domain::State& start,
   using State = typename Domain::State;
   static CumulativeFunctionTimer function_timer_(__FUNCTION__);
   CumulativeFunctionTimer::Invocation invoke(&function_timer_);
-  // Safety cap on expansions. This bounds worst-case (no-solution) runtime: the
-  // search fans out over free space until it hits this cap, so the ceiling is
-  // roughly kMaxEdgeExpansions * per-expansion cost. Sized to keep the worst
-  // case under ~0.2 s while still solving every goal in the demo scene.
-  static const uint64_t kMaxEdgeExpansions = 7000;
+  const uint64_t max_edge_expansions =
+      CONFIG_max_edge_expansions > 0 ? static_cast<uint64_t>(CONFIG_max_edge_expansions) : 7000u;
   static const bool kDebug = false;
 
   std::unordered_map<uint64_t, uint64_t> parent_map_;
@@ -154,7 +163,7 @@ bool AStar(const typename Domain::State& start,
   std::vector<float> costs;
   std::vector<float> base_costs;
   uint64_t edge_expansions = 0;
-  while (edge_expansions < kMaxEdgeExpansions && !queue.empty()) {
+  while (edge_expansions < max_edge_expansions && !queue.empty()) {
     const uint64_t k_current = queue.top().key;
     queue.pop();
     // Lazy deletion: skip keys already finalized (or superseded by a lower-cost
@@ -191,8 +200,16 @@ bool AStar(const typename Domain::State& start,
       // O(1) grid lookups, so evaluating them for successors that turn out not
       // to improve on a known g is free.
       const float h = domain.Heuristic(s_next, goal);
-      if (cost_bound > 0.0f &&
-          g_base + domain.HeuristicBase(s_next, goal) > cost_bound) {
+      // A node the base heuristic cannot reach carries a sentinel rather than a
+      // length, so it must not be measured against the budget: the sentinel
+      // dwarfs any sane bound, and pruning on it drops every route through a
+      // cell the heuristic gave up on while the successor generator did not.
+      // Those cells line every tight gap, so the effect is not marginal -- it
+      // fails the whole search, at any budget, which is exactly what it looks
+      // like when a bounded round returns nothing and an unbounded one succeeds.
+      // Such a node simply goes unpruned; correctness never depended on it.
+      const float h_base = domain.HeuristicBase(s_next, goal);
+      if (cost_bound > 0.0f && h_base < domain.UnreachableHeuristic() && g_base + h_base > cost_bound) {
         continue;
       }
       const auto it = g_values_.find(k_next);

@@ -96,21 +96,22 @@ py::array_t<float> plan(
 //   cost       diversity-free arc-length + turn cost, meters
 //   ratio      cost relative to path 0, i.e. the realized suboptimality
 //   elapsed_s  wall time for that path's search
-py::list plan_diverse(
-    py::array_t<float, py::array::c_style | py::array::forcecast> point_cloud,
-    std::pair<float, float> goal,
-    const std::string& config_path,
-    float world_size,
-    int num_paths,
-    const std::string& mode,
-    float weight,
-    uint64_t seed,
-    float noise,
-    float ball_radius,
-    float ball_weight,
-    float ball_spacing,
-    float suboptimality,
-    float min_separation) {
+py::list plan_diverse(py::array_t<float, py::array::c_style | py::array::forcecast> point_cloud,
+                      std::pair<float, float> goal,
+                      const std::string& config_path,
+                      float world_size,
+                      int num_paths,
+                      const std::string& mode,
+                      float weight,
+                      uint64_t seed,
+                      float noise,
+                      float ball_radius,
+                      float ball_weight,
+                      float ball_spacing,
+                      float suboptimality,
+                      float min_separation,
+                      float start_exclusion,
+                      float goal_exclusion) {
   const std::vector<Eigen::Vector2f> cloud = ToCloud(point_cloud);
   const navigation::NavigationParams params = navigation::LoadConfig(config_path);
 
@@ -125,6 +126,8 @@ py::list plan_diverse(
   opts.ball_spacing = ball_spacing;
   opts.suboptimality = suboptimality;
   opts.min_separation = min_separation;
+  opts.start_exclusion = start_exclusion;
+  opts.goal_exclusion = goal_exclusion;
 
   std::vector<navigation::HybridPlanResult> results;
   {
@@ -163,9 +166,12 @@ PYBIND11_MODULE(hybrid_astar, m) {
   m.doc() =
       "Differential-drive kinodynamic hybrid A* planner. plan() returns an "
       "(N, 5) array of x, y, theta, v, omega.";
-  m.def("plan", &plan, py::arg("point_cloud"), py::arg("goal"),
+  m.def("plan",
+        &plan,
+        py::arg("point_cloud"),
+        py::arg("goal"),
         py::arg("config_path") = "config/navigation.lua",
-        py::arg("world_size") = 12.8f,
+        py::arg("world_size") = 19.2f,
         py::arg("seed") = 0,
         py::arg("noise") = 0.0f,
         py::arg("weight") = 1.0f,
@@ -174,9 +180,12 @@ PYBIND11_MODULE(hybrid_astar, m) {
         "(noise=eta in meters, 0=off); weight>=1 is the weighted-A* heuristic "
         "factor (1=optimal). Returns (N, 5): x, y, theta, v, omega.");
 
-  m.def("plan_diverse", &plan_diverse, py::arg("point_cloud"), py::arg("goal"),
+  m.def("plan_diverse",
+        &plan_diverse,
+        py::arg("point_cloud"),
+        py::arg("goal"),
         py::arg("config_path") = "config/navigation.lua",
-        py::arg("world_size") = 12.8f,
+        py::arg("world_size") = 19.2f,
         py::arg("num_paths") = 3,
         py::arg("mode") = "ball",
         py::arg("weight") = 1.3f,
@@ -187,6 +196,8 @@ PYBIND11_MODULE(hybrid_astar, m) {
         py::arg("ball_spacing") = 0.3f,
         py::arg("suboptimality") = 1.0f,
         py::arg("min_separation") = 0.3f,
+        py::arg("start_exclusion") = -1.0f,
+        py::arg("goal_exclusion") = -1.0f,
         "Plan up to num_paths distinct paths to one goal=(x, y) around a 2D "
         "point cloud (Nx2, base_link frame).\n\n"
         "mode='ball' repels each round from the paths already accepted, so the "
